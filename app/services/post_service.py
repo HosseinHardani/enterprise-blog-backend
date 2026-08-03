@@ -1,5 +1,4 @@
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,7 +40,6 @@ class PostService:
             raise NotFoundError("Category not found")
 
         slug = generate_slug(title)
-
         if await self.posts.get_by_slug(slug):
             slug = generate_unique_slug(title)
 
@@ -58,54 +56,25 @@ class PostService:
             author_id=author.id,
             tags=tags,
         )
-
         self.db.add(post)
-
         await self.db.flush()
-
-        await self.db.refresh(
-            post,
-            attribute_names=[
-                "author",
-                "category",
-                "tags",
-            ],
-        )
-
+        await self.db.refresh(post, attribute_names=["author", "category", "tags"])
         await self.db.commit()
+        return await self.posts.get_by_id(post.id)
 
-        created_post = await self.posts.get_by_id(post.id)
-
-        if created_post is None:
-            raise NotFoundError("Post not found")
-
-        return created_post
-
-    async def get_by_id_or_404(
-        self,
-        post_id: uuid.UUID,
-    ) -> Post:
+    async def get_by_id_or_404(self, post_id: uuid.UUID) -> Post:
         post = await self.posts.get_by_id(post_id)
-
         if post is None:
             raise NotFoundError("Post not found")
-
         return post
 
-    async def get_by_slug_or_404(
-        self,
-        slug: str,
-        increment_view: bool = False,
-    ) -> Post:
+    async def get_by_slug_or_404(self, slug: str, increment_view: bool = False) -> Post:
         post = await self.posts.get_by_slug(slug)
-
         if post is None:
             raise NotFoundError("Post not found")
-
         if increment_view:
             await self.posts.increment_view_count(post)
             await self.db.commit()
-
         return post
 
     async def list_posts(
@@ -146,7 +115,6 @@ class PostService:
         status: PostStatus | None,
     ) -> Post:
         post = await self.get_by_id_or_404(post_id)
-
         if not _can_modify(actor, post):
             raise ForbiddenError("You do not have permission to modify this post")
 
@@ -155,98 +123,57 @@ class PostService:
 
         if title is not None and title != post.title:
             new_slug = generate_slug(title)
-
             if new_slug != post.slug and await self.posts.get_by_slug(new_slug):
                 new_slug = generate_unique_slug(title)
-
             post.title = title
             post.slug = new_slug
-
         if content is not None:
             post.content = content
-
         if excerpt is not None:
             post.excerpt = excerpt
-
         if cover_image_url is not None:
             post.cover_image_url = cover_image_url
-
         if category_id is not None:
             post.category_id = category_id
-
         if status is not None:
             post.status = status
-
         if tag_ids is not None:
             post.tags = await self.tags.get_by_ids(tag_ids)
 
         await self.db.flush()
         await self.db.commit()
+        return await self.posts.get_by_id(post.id)
 
-        updated_post = await self.posts.get_by_id(post.id)
-
-        if updated_post is None:
-            raise NotFoundError("Post not found")
-
-        return updated_post
-
-    async def delete(
-        self,
-        post_id: uuid.UUID,
-        actor: User,
-    ) -> None:
+    async def delete(self, post_id: uuid.UUID, actor: User) -> None:
         post = await self.get_by_id_or_404(post_id)
-
         if not _can_modify(actor, post):
             raise ForbiddenError("You do not have permission to delete this post")
+        from datetime import datetime, timezone
 
         post.is_deleted = True
-        post.deleted_at = datetime.now(UTC)
-
+        post.deleted_at = datetime.now(timezone.utc)
         await self.db.commit()
 
-    async def toggle_like(
-        self,
-        post_id: uuid.UUID,
-        user: User,
-    ) -> bool:
+    async def toggle_like(self, post_id: uuid.UUID, user: User) -> bool:
+        """Returns True if the post is now liked, False if the like was removed."""
         await self.get_by_id_or_404(post_id)
-
-        existing = await self.likes.get_by_user_and_post(
-            user.id,
-            post_id,
-        )
-
+        existing = await self.likes.get_by_user_and_post(user.id, post_id)
         if existing:
             await self.likes.delete(existing)
             await self.db.commit()
             return False
-
-        await self.likes.create(
-            user_id=user.id,
-            post_id=post_id,
-        )
-
+        await self.likes.create(user_id=user.id, post_id=post_id)
         await self.db.commit()
-
         return True
 
-    async def enrich_with_counts_and_status(
-        self,
-        post: Post,
-        user: User | None,
-    ) -> dict:
+    async def enrich_with_counts_and_status(self, post: Post, user: User | None) -> dict:
         like_count = await self.posts.get_like_count(post.id)
         comment_count = await self.posts.get_comment_count(post.id)
-
         is_liked = False
         is_bookmarked = False
-
         if user is not None:
             is_liked = (await self.likes.get_by_user_and_post(user.id, post.id)) is not None
-
             is_bookmarked = (await self.bookmarks.get_by_user_and_post(user.id, post.id)) is not None
-
         return {
             "like_count": like_count,
             "comment_count": comment_count,

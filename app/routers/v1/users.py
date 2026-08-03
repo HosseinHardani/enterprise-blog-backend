@@ -81,9 +81,7 @@ async def change_email(
     return await service.change_email(current_user, payload.new_email, payload.current_password)
 
 
-@router.post(
-    "/me/change-password", response_model=MessageResponse, summary="Change the current user's password"
-)
+@router.post("/me/change-password", response_model=MessageResponse, summary="Change the current user's password")
 async def change_password(
     payload: UserChangePassword,
     current_user: User = Depends(get_current_user),

@@ -46,9 +46,7 @@ async def create_comment(
     return await service.create(post_id, current_user, payload.content, payload.parent_id)
 
 
-@router.patch(
-    "/comments/{comment_id}", response_model=CommentResponse, summary="Edit a comment (author or admin)"
-)
+@router.patch("/comments/{comment_id}", response_model=CommentResponse, summary="Edit a comment (author or admin)")
 async def update_comment(
     comment_id: uuid.UUID,
     payload: CommentUpdate,

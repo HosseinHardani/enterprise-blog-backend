@@ -19,40 +19,21 @@ class BookmarkService:
         post = await self.posts.get_by_id(post_id)
         if post is None:
             raise NotFoundError("Post not found")
-
         existing = await self.bookmarks.get_by_user_and_post(user.id, post_id)
         if existing:
             raise AlreadyExistsError("Post already bookmarked")
-
-        bookmark = await self.bookmarks.create(
-            user_id=user.id,
-            post_id=post_id,
-        )
-
+        bookmark = await self.bookmarks.create(user_id=user.id, post_id=post_id)
         await self.db.commit()
-
-        result = await self.bookmarks.get_by_id_with_post(bookmark.id)
-
-        if result is None:
-            raise NotFoundError("Bookmark not found after creation")
-
-        return result
+        return await self.bookmarks.get_by_id_with_post(bookmark.id)
 
     async def remove(self, user: User, post_id: uuid.UUID) -> None:
         existing = await self.bookmarks.get_by_user_and_post(user.id, post_id)
-
         if existing is None:
             raise NotFoundError("Bookmark not found")
-
         await self.bookmarks.delete(existing)
         await self.db.commit()
 
-    async def list_for_user(
-        self,
-        user: User,
-        offset: int,
-        limit: int,
-    ):
+    async def list_for_user(self, user: User, offset: int, limit: int):
         items = await self.bookmarks.list_for_user(user.id, offset, limit)
         total = await self.bookmarks.count_for_user(user.id)
         return items, total

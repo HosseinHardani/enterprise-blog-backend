@@ -3,7 +3,6 @@ Minimal SMTP email sender. In production this is normally invoked from a
 Celery task (see app/tasks/email_tasks.py) so the request/response cycle
 never blocks on SMTP I/O.
 """
-
 import logging
 import smtplib
 from email.message import EmailMessage

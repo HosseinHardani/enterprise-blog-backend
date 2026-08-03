@@ -15,9 +15,7 @@ from app.utils.pagination import PageParams
 router = APIRouter(prefix="/bookmarks", tags=["Bookmarks"])
 
 
-@router.get(
-    "", response_model=PaginatedResponse[BookmarkResponse], summary="List the current user's bookmarks"
-)
+@router.get("", response_model=PaginatedResponse[BookmarkResponse], summary="List the current user's bookmarks")
 async def list_bookmarks(
     page_params: PageParams = Depends(pagination_params),
     current_user: User = Depends(get_current_user),

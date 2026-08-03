@@ -93,6 +93,11 @@ async def refresh(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ):
+    print("cookies:", request.cookies)
+
+    refresh_token = request.cookies.get(settings.REFRESH_TOKEN_COOKIE_NAME)
+
+    print("refresh:", refresh_token)
     refresh_token = request.cookies.get(settings.REFRESH_TOKEN_COOKIE_NAME)
     if not refresh_token:
         raise TokenError("No refresh token provided")
@@ -105,6 +110,7 @@ async def refresh(
     )
     _set_refresh_cookie(response, new_refresh_token)
     return TokenResponse(access_token=access_token, expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+
 
 
 @router.post(
