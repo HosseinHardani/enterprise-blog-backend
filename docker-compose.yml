@@ -1,0 +1,154 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: blog_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-blog_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-blog_password}
+      POSTGRES_DB: ${POSTGRES_DB:-blog_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-blog_user} -d ${POSTGRES_DB:-blog_db}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - blog_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: blog_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - blog_network
+
+  smtp4dev:
+    image: rnwood/smtp4dev:v3
+    container_name: blog_smtp4dev
+    restart: unless-stopped
+    ports:
+      - "5000:80"
+      - "2525:25"
+    networks:
+      - blog_network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: blog_api
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-blog_user}:${POSTGRES_PASSWORD:-blog_password}@postgres:5432/${POSTGRES_DB:-blog_db}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-blog_user}:${POSTGRES_PASSWORD:-blog_password}@postgres:5432/${POSTGRES_DB:-blog_db}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SMTP_HOST: smtp4dev
+      SMTP_PORT: 25
+      SMTP_TLS: "false"
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - .:/app
+      - uploads_data:/app/uploads
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      smtp4dev:
+        condition: service_started
+
+    command:
+      - sh
+      - -c
+      - |
+        alembic upgrade head
+        exec uvicorn app.main:app \
+          --host 0.0.0.0 \
+          --port 8000 \
+          --reload
+
+    networks:
+      - blog_network
+
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: blog_celery_worker
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-blog_user}:${POSTGRES_PASSWORD:-blog_password}@postgres:5432/${POSTGRES_DB:-blog_db}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-blog_user}:${POSTGRES_PASSWORD:-blog_password}@postgres:5432/${POSTGRES_DB:-blog_db}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SMTP_HOST: smtp4dev
+      SMTP_PORT: 25
+      SMTP_TLS: "false"
+
+    volumes:
+      - .:/app
+      - uploads_data:/app/uploads
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      smtp4dev:
+        condition: service_started
+
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app
+      - worker
+      - --loglevel=info
+
+    networks:
+      - blog_network
+
+
+networks:
+  blog_network:
+    driver: bridge
+
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
