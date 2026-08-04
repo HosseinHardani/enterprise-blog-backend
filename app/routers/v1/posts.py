@@ -19,7 +19,9 @@ router = APIRouter(prefix="/posts", tags=["Posts"])
 async def _to_list_item(post, service: PostService, user: User | None) -> PostListItem:
     counts = await service.enrich_with_counts_and_status(post, user)
     item = PostListItem.model_validate(post)
-    return item.model_copy(update={"like_count": counts["like_count"], "comment_count": counts["comment_count"]})
+    return item.model_copy(
+        update={"like_count": counts["like_count"], "comment_count": counts["comment_count"]}
+    )
 
 
 async def _to_detail(post, service: PostService, user: User | None) -> PostDetail:
@@ -28,7 +30,9 @@ async def _to_detail(post, service: PostService, user: User | None) -> PostDetai
     return detail.model_copy(update=counts)
 
 
-@router.get("", response_model=PaginatedResponse[PostListItem], summary="List posts with filtering, search, sorting")
+@router.get(
+    "", response_model=PaginatedResponse[PostListItem], summary="List posts with filtering, search, sorting"
+)
 async def list_posts(
     page_params: PageParams = Depends(pagination_params),
     status_filter: PostStatus | None = Query(None, alias="status"),
@@ -115,7 +119,9 @@ async def update_post(
     return await _to_detail(post, service, current_user)
 
 
-@router.delete("/{post_id}", response_model=MessageResponse, summary="Delete a post (author, editor, or admin)")
+@router.delete(
+    "/{post_id}", response_model=MessageResponse, summary="Delete a post (author, editor, or admin)"
+)
 async def delete_post(
     post_id: uuid.UUID,
     current_user: User = Depends(get_current_user),

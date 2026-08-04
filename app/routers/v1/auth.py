@@ -112,7 +112,6 @@ async def refresh(
     return TokenResponse(access_token=access_token, expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)
 
 
-
 @router.post(
     "/logout",
     response_model=MessageResponse,

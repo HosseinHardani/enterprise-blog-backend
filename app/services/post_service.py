@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,7 +61,12 @@ class PostService:
         await self.db.flush()
         await self.db.refresh(post, attribute_names=["author", "category", "tags"])
         await self.db.commit()
-        return await self.posts.get_by_id(post.id)
+
+        created_post = await self.posts.get_by_id(post.id)
+        if created_post is None:
+            raise NotFoundError("Post not found after creation")
+
+        return created_post
 
     async def get_by_id_or_404(self, post_id: uuid.UUID) -> Post:
         post = await self.posts.get_by_id(post_id)
@@ -142,16 +148,21 @@ class PostService:
 
         await self.db.flush()
         await self.db.commit()
-        return await self.posts.get_by_id(post.id)
+
+        updated_post = await self.posts.get_by_id(post.id)
+        if updated_post is None:
+            raise NotFoundError("Post not found after update")
+
+        return updated_post
 
     async def delete(self, post_id: uuid.UUID, actor: User) -> None:
         post = await self.get_by_id_or_404(post_id)
         if not _can_modify(actor, post):
             raise ForbiddenError("You do not have permission to delete this post")
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         post.is_deleted = True
-        post.deleted_at = datetime.now(timezone.utc)
+        post.deleted_at = datetime.now(UTC)
         await self.db.commit()
 
     async def toggle_like(self, post_id: uuid.UUID, user: User) -> bool:

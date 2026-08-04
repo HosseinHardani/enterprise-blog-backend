@@ -76,8 +76,6 @@ def create_special_token(
     return _create_token(subject=subject, token_type=token_type, expires_delta=expires_delta)
 
 
-from jose import JWTError
-
 def decode_token(token: str) -> dict[str, Any]:
     print("TOKEN:", token)
     print("SECRET:", settings.SECRET_KEY)
@@ -94,6 +92,8 @@ def decode_token(token: str) -> dict[str, Any]:
     except JWTError as e:
         print("JWT ERROR:", e)
         raise
+
+
 __all__ = [
     "TokenType",
     "hash_password",

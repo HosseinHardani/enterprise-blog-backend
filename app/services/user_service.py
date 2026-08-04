@@ -1,7 +1,9 @@
 """
 Business logic for user profile management.
 """
+
 import uuid
+from datetime import UTC
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,11 +59,11 @@ class UserService:
         return updated
 
     async def soft_delete_account(self, user: User) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         user.is_deleted = True
         user.is_active = False
-        user.deleted_at = datetime.now(timezone.utc)
+        user.deleted_at = datetime.now(UTC)
         await self.refresh_tokens.revoke_all_for_user(user.id)
         await self.db.commit()
 

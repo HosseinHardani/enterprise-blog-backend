@@ -14,8 +14,9 @@ Token strategy
 - Every refresh call rotates the refresh token (single-use refresh tokens)
   to limit the blast radius of a leaked token.
 """
+
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,12 +30,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.exceptions.custom import (
-    AlreadyExistsError,
-    InvalidCredentialsError,
-    NotFoundError,
-    TokenError,
-)
+from app.exceptions.custom import AlreadyExistsError, InvalidCredentialsError, NotFoundError, TokenError
 from app.models.user import User
 from app.repositories.refresh_token import RefreshTokenRepository
 from app.repositories.user import UserRepository
@@ -127,10 +123,13 @@ class AuthService:
         # Blacklist the current access token for the remainder of its life.
         jti = access_token_payload.get("jti")
         exp = access_token_payload.get("exp")
-        if jti and exp:
-            ttl = max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
-            await self.redis.set(f"blacklist:access:{jti}", "1", ex=ttl)
-
+        if jti and exp and self.redis is not None:
+            ttl = max(int(exp - datetime.now(UTC).timestamp()), 1)
+            await self.redis.set(
+                f"blacklist:access:{jti}",
+                "1",
+                ex=ttl,
+            )
         if refresh_token:
             try:
                 payload = decode_token(refresh_token)
@@ -143,7 +142,6 @@ class AuthService:
                 pass  # Already invalid/expired -- nothing to revoke.
 
     # --- Token refresh -----------------------------------------------------
-
     async def refresh_access_token(
         self, refresh_token: str, user_agent: str | None, ip_address: str | None
     ) -> tuple[str, str, datetime]:
@@ -151,7 +149,7 @@ class AuthService:
         try:
             payload = decode_token(refresh_token)
         except Exception:
-            raise TokenError("Invalid or expired refresh token")
+            raise TokenError("Invalid or expired refresh token") from None
 
         if payload.get("type") != TokenType.REFRESH.value:
             raise TokenError("Invalid token type")
@@ -160,82 +158,115 @@ class AuthService:
         if stored is None:
             raise TokenError("Refresh token not recognized")
         if stored.revoked:
-            # Possible token reuse/theft -- revoke the whole session family defensively.
             await self.refresh_tokens.revoke_all_for_user(stored.user_id)
             await self.db.commit()
             raise TokenError("Refresh token has already been used")
-        if stored.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        if stored.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
             raise TokenError("Refresh token has expired")
 
         user = await self.users.get_by_id(stored.user_id)
         if user is None or not user.is_active or user.is_deleted:
             raise TokenError("User no longer active")
 
-        # Rotate: revoke the old one, issue a new one.
         stored.revoked = True
-        access_token, _, _ = create_access_token(subject=str(user.id), role=user.role.value)
-        new_refresh_token, new_jti, new_exp = create_refresh_token(subject=str(user.id))
-        await self.refresh_tokens.create(
-            user_id=user.id, jti=new_jti, expires_at=new_exp, user_agent=user_agent, ip_address=ip_address
-        )
-        await self.db.commit()
-        return access_token, new_refresh_token, new_exp
 
-    # --- Email verification -----------------------------------------------------
+        access_token, _, _ = create_access_token(
+            subject=str(user.id),
+            role=user.role.value,
+        )
+
+        new_refresh_token, new_jti, new_exp = create_refresh_token(subject=str(user.id))
+
+        await self.refresh_tokens.create(
+            user_id=user.id,
+            jti=new_jti,
+            expires_at=new_exp,
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
+
+        await self.db.commit()
+
+        return access_token, new_refresh_token, new_exp
 
     async def verify_email(self, token: str) -> None:
         try:
             payload = decode_token(token)
         except Exception:
-            raise TokenError("Invalid or expired verification token")
+            raise TokenError("Invalid or expired verification token") from None
+
         if payload.get("type") != TokenType.EMAIL_VERIFICATION.value:
             raise TokenError("Invalid token type")
 
         user = await self.users.get_by_id(uuid.UUID(payload["sub"]))
+
         if user is None:
             raise NotFoundError("User not found")
+
         user.is_email_verified = True
         await self.db.commit()
-
-    async def resend_verification(self, email: str) -> None:
-        user = await self.users.get_by_email(email)
-        if user is None or user.is_email_verified:
-            return  # Don't leak whether the email exists.
-        token, _, _ = create_special_token(
-            subject=str(user.id), token_type=TokenType.EMAIL_VERIFICATION, expires_delta=timedelta(hours=24)
-        )
-        _dispatch_verification_email(user.email, token)
-
-    # --- Password reset -----------------------------------------------------
-
-    async def request_password_reset(self, email: str) -> None:
-        user = await self.users.get_by_email(email)
-        if user is None:
-            return  # Don't leak whether the email exists.
-        token, _, _ = create_special_token(
-            subject=str(user.id), token_type=TokenType.PASSWORD_RESET, expires_delta=timedelta(hours=1)
-        )
-        _dispatch_password_reset_email(user.email, token)
 
     async def confirm_password_reset(self, token: str, new_password: str) -> None:
         try:
             payload = decode_token(token)
         except Exception:
-            raise TokenError("Invalid or expired reset token")
+            raise TokenError("Invalid or expired reset token") from None
+
         if payload.get("type") != TokenType.PASSWORD_RESET.value:
             raise TokenError("Invalid token type")
 
         user = await self.users.get_by_id(uuid.UUID(payload["sub"]))
+
         if user is None:
             raise NotFoundError("User not found")
 
         user.hashed_password = hash_password(new_password)
+
         await self.refresh_tokens.revoke_all_for_user(user.id)
         await self.db.commit()
 
-    async def change_password(self, user: User, current_password: str, new_password: str) -> None:
+    async def resend_verification(self, email: str) -> None:
+        user = await self.users.get_by_email(email)
+
+        if user is None:
+            return
+
+        if user.is_email_verified:
+            return
+
+        token, _, _ = create_special_token(
+            subject=str(user.id),
+            token_type=TokenType.EMAIL_VERIFICATION,
+            expires_delta=timedelta(hours=24),
+        )
+
+        _dispatch_verification_email(user.email, token)
+
+    async def request_password_reset(self, email: str) -> None:
+        user = await self.users.get_by_email(email)
+
+        if user is None:
+            return
+
+        token, _, _ = create_special_token(
+            subject=str(user.id),
+            token_type=TokenType.PASSWORD_RESET,
+            expires_delta=timedelta(hours=1),
+        )
+
+        _dispatch_password_reset_email(user.email, token)
+
+    async def change_password(
+        self,
+        user: User,
+        current_password: str,
+        new_password: str,
+    ) -> None:
         if not verify_password(current_password, user.hashed_password):
             raise InvalidCredentialsError("Current password is incorrect")
+
         user.hashed_password = hash_password(new_password)
+
         await self.refresh_tokens.revoke_all_for_user(user.id)
+
         await self.db.commit()
